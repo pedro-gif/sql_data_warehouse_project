@@ -1,0 +1,174 @@
+/*
+===============================================================================
+Data Quality Checks: Silver Layer
+===============================================================================
+Purpose:
+    To validate the integrity, cleanliness, and standardization of the 
+    data after the Silver Layer ETL process.
+===============================================================================
+*/
+
+-- ============================================================================
+-- 1. Check for Primary Key Integrity
+-- ============================================================================
+-- Description: Ensures 'prd_id' is unique and contains no NULL values.
+-- Expected Result: No rows returned.
+-- ============================================================================
+SELECT 
+    prd_id,
+    COUNT(*) AS duplicate_count
+FROM silver.crm_prd_info
+GROUP BY prd_id
+HAVING COUNT(*) > 1 OR prd_id IS NULL;
+
+
+-- ============================================================================
+-- 2. Check for Unwanted Spaces (Whitespace Validation)
+-- ============================================================================
+-- Description: Validates that the TRIM() function successfully removed 
+--              leading/trailing spaces during the load.
+-- Expected Result: No rows returned.
+-- ============================================================================
+
+-- Check First Name
+SELECT cst_firstname
+FROM silver.crm_cust_info
+WHERE cst_firstname != TRIM(cst_firstname);
+
+-- Check Last Name
+SELECT cst_lastname	
+FROM silver.crm_cust_info
+WHERE cst_lastname != TRIM(cst_lastname);
+
+-- Check Gender
+SELECT cst_gndr
+FROM silver.crm_cust_info
+WHERE cst_gndr != TRIM(cst_gndr);
+
+
+-- ============================================================================
+-- 3. Data Standardization & Consistency
+-- ============================================================================
+-- Description: Checks the distinct values of categorical columns to ensure
+--              mappings (e.g., 'M' -> 'Male') were applied correctly.
+-- Expected Result: 'Male', 'Female', or 'n/a'.
+-- ============================================================================
+
+SELECT DISTINCT 
+    cst_gndr
+FROM silver.crm_cust_info;
+
+
+-- ============================================================================
+-- 4. Final Data Preview
+-- ============================================================================
+SELECT TOP 100 
+    *
+FROM silver.crm_cust_info;
+
+
+
+/*
+===============================================================================
+Experimentation & Validation Queries
+===============================================================================
+Purpose: 
+    These "test codes" are used to experiment with cleansing logic and 
+    validate business rules before finalizing the Silver Layer load.
+===============================================================================
+*/
+
+-- ---------------------------------------------------------------------------
+-- TEST 1: ERP Customer Transformation Experiment
+-- ---------------------------------------------------------------------------
+-- Goal: Test CID cleaning, date validation, and gender standardization.
+-- ---------------------------------------------------------------------------
+INSERT INTO silver.erp_cust_az12 (cid, bdate, gen)
+SELECT 
+    CASE WHEN cid LIKE 'NAS%' THEN SUBSTRING(cid, 4, LEN(cid)) 
+         ELSE cid END AS cid,
+    CASE WHEN bdate > GETDATE() THEN NULL 
+         ELSE bdate END AS bdate,
+    CASE WHEN UPPER(TRIM(gen)) IN ('F', 'FEMALE') THEN 'Female'
+         WHEN UPPER(TRIM(gen)) IN ('M', 'MALE') THEN 'Male'
+         ELSE 'n/a' END AS gen
+FROM bronze.erp_cust_az12;
+
+SELECT * FROM silver.erp_cust_az12;
+
+
+-- ---------------------------------------------------------------------------
+-- TEST 2: ERP Location Transformation Experiment
+-- ---------------------------------------------------------------------------
+-- Goal: Test dash removal and country name mapping.
+-- ---------------------------------------------------------------------------
+INSERT INTO silver.erp_loc_a101 (cid, cntry)
+SELECT
+    REPLACE(cid, '-', '') AS cid,
+    CASE WHEN TRIM(cntry) = 'DE' THEN 'Germany'
+         WHEN TRIM(cntry) IN ('US', 'USA') THEN 'United States'
+         WHEN TRIM(cntry) = '' OR cntry IS NULL THEN 'n/a'
+         ELSE TRIM(cntry) END AS cntry
+FROM bronze.erp_loc_a101;
+
+SELECT * FROM silver.erp_loc_a101;
+
+
+-- ---------------------------------------------------------------------------
+-- TEST 3: Product Data Normalization Experiment
+-- ---------------------------------------------------------------------------
+-- Goal: Test prd_key splitting and SCD Type 2 date calculations (LEAD).
+-- ---------------------------------------------------------------------------
+INSERT INTO silver.crm_prd_info (
+    prd_id, cat_id, prd_key, prd_nm, prd_cost, prd_line, prd_start_dt, prd_end_dt
+)
+SELECT
+    prd_id,
+    REPLACE(SUBSTRING(prd_key, 1, 5), '-', '_') AS cat_id,
+    SUBSTRING(prd_key, 7, LEN(prd_key)) AS prd_key,
+    prd_nm,
+    ISNULL(prd_cost, 0) AS prd_cost,
+    CASE UPPER(LTRIM(RTRIM(prd_line))) 
+        WHEN 'M' THEN 'Mountain'
+        WHEN 'R' THEN 'Road'
+        WHEN 'S' THEN 'Other Sales'
+        WHEN 'T' THEN 'Touring'
+        ELSE 'n/a' END AS prd_line,
+    CAST(prd_start_dt AS DATE) AS prd_start_dt,
+    CAST(DATEADD(DAY, -1, LEAD(prd_start_dt) OVER (PARTITION BY prd_key ORDER BY prd_start_dt)) AS DATE) AS prd_end_dt
+FROM bronze.crm_prd_info;
+
+SELECT * FROM silver.crm_prd_info;
+
+
+-- ---------------------------------------------------------------------------
+-- TEST 4: Sales Integrity & Business Rule Experiments
+-- ---------------------------------------------------------------------------
+-- Goal: Identify outliers where order dates are logically impossible 
+--       or where sales amounts don't match the quantity * price rule.
+-- ---------------------------------------------------------------------------
+
+-- 4a. Identify Invalid Date Formats (Not 8 chars or <= 0)
+SELECT NULLIF(sls_order_dt, 0) AS sls_order_dt
+FROM bronze.crm_sales_details
+WHERE sls_order_dt <= 0 OR LEN(sls_order_dt) != 8;
+
+-- 4b. Identify Chronological Errors (Order Date after Ship/Due Date)
+SELECT * FROM bronze.crm_sales_details
+WHERE sls_order_dt > sls_due_dt OR sls_order_dt > sls_ship_dt;
+
+-- 4c. Experiment with Sales & Price Recalculation
+-- Logic: If Sales is invalid, force Recalculation (Qty * |Price|).
+-- Logic: If Price is invalid, derive it (Sales / Qty).
+SELECT DISTINCT
+    sls_sales AS old_sls_sales,
+    sls_quantity,
+    sls_price AS old_sls_price,
+    CASE WHEN sls_sales IS NULL OR sls_sales <= 0 OR sls_sales != sls_quantity * ABS(sls_price)
+         THEN sls_quantity * ABS(sls_price)
+         ELSE sls_sales END AS new_sls_sales,
+    CASE WHEN sls_price IS NULL OR sls_price <= 0
+         THEN sls_sales / NULLIF(sls_quantity, 0)
+         ELSE sls_price END AS new_sls_price
+FROM bronze.crm_sales_details
+WHERE sls_sales != sls_quantity * sl
