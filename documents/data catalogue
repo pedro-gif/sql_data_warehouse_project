@@ -1,0 +1,56 @@
+# Data Dictionary: Gold Layer
+
+## Overview
+The **Gold Layer** represents the refined, business-level data representation. It is structured using a **Star Schema** consisting of dimension and fact tables, optimized for analytical reporting and BI tool consumption.
+
+---
+
+## 1. gold.dim_customers
+**Purpose:** Stores enriched customer information, including demographic and geographical data.
+
+| Column Name | Data Type | Description |
+| :--- | :--- | :--- |
+| **customer_key** | INT | Surrogate key uniquely identifying each customer record (Primary Key). |
+| **customer_id** | INT | Unique identifier from the source system used for tracking. |
+| **first_name** | NVARCHAR(50) | The customer's first name. |
+| **last_name** | NVARCHAR(50) | The customer's last name. |
+| **country** | NVARCHAR(50) | The customer's country of residence. |
+| **marital_status** | NVARCHAR(50) | The customer's marital status. |
+| **gender** | NVARCHAR(50) | The customer's gender (e.g., 'Male', 'Female', 'N/A'). |
+| **birth_date** | DATE | The customer's date of birth. |
+| **dwh_creation_date** | DATETIME | Timestamp when the record was created in the Data Warehouse. |
+
+---
+
+## 2. gold.dim_products
+**Purpose:** Provides a comprehensive catalog of products and their attributes.
+
+| Column Name | Data Type | Description |
+| :--- | :--- | :--- |
+| **product_key** | INT | Surrogate key uniquely identifying each product (Primary Key). |
+| **product_id** | INT | Unique identifier for internal tracking and referencing. |
+| **product_number** | NVARCHAR(50) | Alphanumeric code used for categorization or inventory. |
+| **product_name** | NVARCHAR(50) | Descriptive name of the product (includes type, color, size). |
+| **category_id** | NVARCHAR(50) | Unique identifier for the highest level of product classification. |
+| **subcategory** | NVARCHAR(50) | Detailed classification of the product within its category. |
+| **maintenance** | NVARCHAR(50) | Indicates if the product requires check-ups (Yes/No). |
+| **cost** | INT | The base cost or acquisition price of the product. |
+| **product_line** | NVARCHAR(50) | The specific line the product belongs to (e.g., Road, Mountain). |
+| **start_date** | DATE | The date when the product became available for sale. |
+
+---
+
+## 3. gold.fact_sales
+**Purpose:** Stores transactional data and key metrics for sales performance.
+
+| Column Name | Data Type | Description |
+| :--- | :--- | :--- |
+| **order_number** | NVARCHAR(50) | Unique identifier for each sales transaction. |
+| **product_key** | INT | Foreign key linking to `gold.dim_products`. |
+| **customer_key** | INT | Foreign key linking to `gold.dim_customers`. |
+| **order_date** | DATE | The date the order was placed. |
+| **shipping_date** | DATE | The date the order was shipped. |
+| **due_date** | DATE | The date when payment was due. |
+| **sales_amount** | INT | Total monetary value of the transaction. |
+| **quantity** | INT | Number of units sold. |
+| **price** | INT | The unit price of the product. |
