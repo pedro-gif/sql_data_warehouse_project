@@ -1,0 +1,142 @@
+/* ============================================================================
+   DATABASE    : DataWarehouse
+   LAYER       : Gold (Presentation / Analytics Layer)
+   DESCRIPTION :
+       This script creates the core Gold-layer dimensional model for analytics.
+       It follows Kimball-style star schema design and consists of:
+
+       - Customer Dimension (dim_customer)
+       - Product Dimension (dim_product)
+       - Sales Fact Table (fact_sales)
+
+       These views are optimized for reporting, BI tools, and analytical queries.
+       All transformations assume Silver-layer data is already cleansed.
+
+   AUTHOR      : Data Engineering Team
+   USAGE       :
+       - Reporting and dashboards
+       - Fact-to-dimension joins
+       - Analytical workloads
+
+   ============================================================================ */
+
+-- USE DataWarehouse;
+
+
+/* ============================================================================
+   VIEW NAME   : gold.dim_customer
+   TYPE        : Dimension
+   GRAIN       : One row per customer
+   PURPOSE     :
+       Stores customer master and demographic information.
+       CRM is treated as the system of record, with ERP data used
+       only for enrichment and fallback scenarios.
+
+   BUSINESS RULES :
+       - Surrogate key generated using ROW_NUMBER
+       - CRM gender takes precedence over ERP gender
+       - LEFT JOINs preserve all customers
+
+   SOURCES     :
+       - silver.crm_cust_info
+       - silver.erp_cust_az12
+       - silver.erp_loc_a101
+   ============================================================================ */
+
+CREATE VIEW gold.dim_customer AS
+SELECT
+    ROW_NUMBER() OVER (ORDER BY ci.cst_id) AS customer_key,
+    ci.cst_id             AS customer_id,
+    ci.cst_key            AS customer_number,
+    ci.cst_firstname      AS firstname,
+    ci.cst_lastname       AS lastname,
+    la.cntry              AS country,
+    ci.cst_marital_status AS marital_status,
+    CASE
+        WHEN ci.cst_gndr <> 'n/a' THEN ci.cst_gndr
+        ELSE COALESCE(ca.gen, 'n/a')
+    END                   AS gender,
+    ca.bdate              AS birth_date,
+    ci.cst_create_date
+FROM silver.crm_cust_info ci
+LEFT JOIN silver.erp_cust_az12 ca
+    ON ci.cst_key = ca.cid
+LEFT JOIN silver.erp_loc_a101 la
+    ON ci.cst_key = la.cid;
+
+
+
+/* ============================================================================
+   VIEW NAME   : gold.dim_product
+   TYPE        : Dimension
+   GRAIN       : One row per active product
+   PURPOSE     :
+       Stores product master data enriched with category information.
+       Historical (ended) products are excluded.
+
+   BUSINESS RULES :
+       - Surrogate key generated using ROW_NUMBER
+       - Only active products included
+       - Category enrichment is optional
+
+   SOURCES     :
+       - silver.crm_prd_info
+       - silver.erp_px_cat_g1v2
+   ============================================================================ */
+
+CREATE VIEW gold.dim_product AS
+SELECT
+    ROW_NUMBER() OVER (
+        ORDER BY pr.prd_start_dt, pr.prd_key
+    )                      AS product_key,
+    pr.prd_id              AS product_id,
+    pr.prd_key             AS product_number,
+    pr.prd_nm              AS product_name,
+    pr.cat_id              AS category_id,
+    px.cat                 AS category,
+    px.subcat              AS subcategory,
+    px.maintenance,
+    pr.prd_cost            AS cost,
+    pr.prd_line            AS product_line,
+    pr.prd_start_dt        AS start_date
+FROM silver.crm_prd_info pr
+LEFT JOIN silver.erp_px_cat_g1v2 px
+    ON pr.cat_id = px.id
+WHERE pr.prd_end_dt IS NULL; 
+
+
+
+/* ============================================================================
+   VIEW NAME   : gold.fact_sales
+   TYPE        : Fact
+   GRAIN       : One row per sales transaction (order line)
+   PURPOSE     :
+       Stores sales transactions and links them to customer and
+       product dimensions using surrogate keys.
+
+   BUSINESS RULES :
+       - Dimension joins resolve surrogate keys
+       - LEFT JOINs preserve all sales records
+
+   SOURCES     :
+       - silver.crm_sales_details 
+       - gold.dim_customer
+       - gold.dim_product
+   ============================================================================ */
+
+CREATE VIEW gold.fact_sales AS
+SELECT
+    sd.sls_ord_num     AS order_number,
+    pr.product_key,
+    cu.customer_key,
+    sd.sls_order_dt   AS order_date,
+    sd.sls_due_dt     AS due_date,
+    sd.sls_ship_dt    AS shipping_date,
+    sd.sls_price      AS price,
+    sd.sls_quantity   AS quantity,
+    sd.sls_sales      AS sales_amount
+FROM silver.crm_sales_details sd
+LEFT JOIN gold.dim_product pr
+    ON sd.sls_prd_key = pr.product_number
+LEFT JOIN gold.dim_customer cu
+    ON sd.sls_cust_id = cu.customer_id;
