@@ -1,0 +1,46 @@
+-- Ranking: Top 5 products by total revenue
+SELECT TOP (5) 
+    p.product_name, 
+    SUM(f.sales_amount) AS amount, 
+    ROW_NUMBER() OVER (ORDER BY SUM(f.sales_amount) DESC) AS top_performers
+FROM gold.fact_sales f
+LEFT JOIN gold.dim_product p 
+    ON p.product_key = f.product_key
+GROUP BY p.product_name;
+
+
+-- Ranking: Bottom 5 products by total revenue
+SELECT TOP (5) 
+    p.product_name, 
+    SUM(f.sales_amount) AS amount, 
+    ROW_NUMBER() OVER (ORDER BY SUM(f.sales_amount)) AS worst_performers
+FROM gold.fact_sales f
+LEFT JOIN gold.dim_product p 
+    ON p.product_key = f.product_key
+GROUP BY p.product_name;
+
+
+-- Ranking: Top 10 customers by total revenue generated
+SELECT TOP (10)
+    c.customer_id, 
+    c.firstname, 
+    c.lastname, 
+    SUM(f.sales_amount) AS amount,
+    ROW_NUMBER() OVER (ORDER BY SUM(f.sales_amount) DESC) AS top_performers
+FROM gold.fact_sales f
+LEFT JOIN gold.dim_customer c 
+    ON f.customer_key = c.customer_key
+GROUP BY c.customer_id, c.firstname, c.lastname;
+
+
+-- Ranking: Bottom 7 customers with the fewest orders placed
+SELECT TOP (7)
+    c.customer_key, 
+    c.firstname, 
+    c.lastname, 
+    COUNT(DISTINCT order_number) AS orders_placed,
+    ROW_NUMBER() OVER (ORDER BY COUNT(DISTINCT order_number)) AS worst_performers
+FROM gold.fact_sales f
+LEFT JOIN gold.dim_customer c 
+    ON f.customer_key = c.customer_key
+GROUP BY c.customer_key, c.firstname, c.lastname;
