@@ -1,0 +1,51 @@
+-- Performance Analysis
+-- Evaluates yearly product performance by comparing:
+-- 1) Each product’s yearly sales against its average sales performance
+-- 2) Year-over-year (YoY) sales changes
+
+WITH Yearly_product_sales AS 
+(
+    SELECT 
+        YEAR(f.order_date) AS order_date,
+        p.product_name,
+        SUM(f.sales_amount) AS amount
+    FROM gold.fact_sales f
+    LEFT JOIN gold.dim_product p
+        ON f.product_key = p.product_key
+    WHERE f.order_date IS NOT NULL
+    GROUP BY 
+        YEAR(f.order_date),
+        p.product_name
+)
+
+SELECT 
+    order_date, 
+    product_name, 
+    amount, 
+
+    -- Average sales benchmark per product
+    AVG(amount) OVER (PARTITION BY product_name) AS average_sales,
+    amount - AVG(amount) OVER (PARTITION BY product_name) AS average_change,
+
+    -- Flag indicating performance relative to product average
+    CASE 
+        WHEN (amount - AVG(amount) OVER (PARTITION BY product_name)) < 0 THEN 'BelowAverage'
+        WHEN (amount - AVG(amount) OVER (PARTITION BY product_name)) > 0 THEN 'AboveAverage'
+        ELSE 'Average'
+    END AS average_flag,
+
+    -- Year-over-year (YoY) comparison
+    LAG(amount) OVER (PARTITION BY product_name ORDER BY order_date) AS py_sales,
+    amount - LAG(amount) OVER (PARTITION BY product_name ORDER BY order_date) AS py_diff,
+
+    -- YoY performance classification
+    CASE 
+        WHEN (amount - LAG(amount) OVER (PARTITION BY product_name ORDER BY order_date)) < 0 THEN 'Decrease'
+        WHEN (amount - LAG(amount) OVER (PARTITION BY product_name ORDER BY order_date)) > 0 THEN 'Increase'
+        ELSE 'NoChange'
+    END AS py_change
+
+FROM Yearly_product_sales
+ORDER BY 
+    product_name, 
+    order_date;
