@@ -1,0 +1,44 @@
+/*
+Customer Segmentation by Spending Behavior
+
+Segments customers into three groups based on purchase history and total spend:
+- VIP: Customers with at least 12 months of history and total spend above £5,000
+- Regular: Customers with at least 12 months of history and total spend of £5,000 or less
+- New: Customers with a lifespan of less than 12 months
+
+Returns the total number of customers in each segment.
+*/
+
+WITH customer_sales AS 
+(
+    SELECT 
+        c.customer_key,
+        MIN(order_date) AS first_order,
+        MAX(order_date) AS last_order,
+        DATEDIFF(month, MIN(order_date), MAX(order_date)) AS lifespan,
+        c.firstname,
+        c.lastname,
+        SUM(f.sales_amount) AS total_amount_spent
+    FROM gold.fact_sales f
+    LEFT JOIN gold.dim_customer c
+        ON f.customer_key = c.customer_key
+    GROUP BY 
+        c.customer_key,
+        c.firstname,
+        c.lastname
+)
+
+SELECT 
+    CASE 
+        WHEN lifespan >= 12 AND total_amount_spent > 5000 THEN 'VIP'
+        WHEN lifespan >= 12 AND total_amount_spent <= 5000 THEN 'Regular'
+        ELSE 'New'
+    END AS customer_category,
+    COUNT(customer_key) AS total_customers
+FROM customer_sales
+GROUP BY 
+    CASE 
+        WHEN lifespan >= 12 AND total_amount_spent > 5000 THEN 'VIP'
+        WHEN lifespan >= 12 AND total_amount_spent <= 5000 THEN 'Regular'
+        ELSE 'New'
+    END;
